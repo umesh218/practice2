@@ -1,50 +1,49 @@
-name: Deploy to Azure VM
+name: Terraform Deploy to Azure
 
 on:
   push:
     branches:
-      - master
+      - main  # Runs on push to main branch
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  terraform:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest  # GitHub-hosted runner
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: 1.5.0
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
 
-    - name: Initialize Terraform
-      run: terraform init
-      working-directory: terraform
+      - name: Login to Azure using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    - name: Apply Terraform
-      run: terraform apply -auto-approve
-      working-directory: terraform
-      env:
-        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      - name: Terraform Init
+        run: terraform init
 
-    - name: Extract Terraform Outputs (Public IP & SSH Key)
-      run: |
-        echo "VM_IP=$(terraform output -raw public_ip)" >> $GITHUB_ENV
-        echo "PRIVATE_KEY='$(terraform output -raw private_key)" >> $GITHUB_ENV
-      working-directory: terraform
+      - name: Terraform Format Check
+        run: terraform fmt -check
 
-    - name: Set up SSH
-      run: |
-        mkdir -p ~/.ssh
-        echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H $VM_IP >> ~/.ssh/known_hosts
+      - name: Terraform Validate
+        run: terraform validate
 
-    - name: Deploy Application
-      run: |
-        scp -r * azureuser@$VM_IP:/home/azureuser/app
-        ssh azureuser@$VM_IP "cd /home/azureuser/app && docker-compose up -d"
+      - name: Set SSH Public Key
+        run: echo "SSH_PUBLIC_KEY=$(cat ~/.ssh/id_rsa.pub)" >> $GITHUB_ENV
+
+      - name: Terraform Plan
+        run: terraform plan -var "ssh_key=$SSH_PUBLIC_KEY"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var "ssh_key=$SSH_PUBLIC_KEY"
