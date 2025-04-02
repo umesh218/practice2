@@ -4,72 +4,65 @@ on:
   push:
     branches:
       - master
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - master
 
-permissions:
-  contents: read
+env:
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
 jobs:
   terraform:
+    name: Terraform Deployment
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: latest
 
       - name: Initialize Terraform
+        working-directory: terraform
         run: terraform init
 
-      - name: Validate Terraform configuration
-        run: terraform validate
-
       - name: Terraform Plan
+        working-directory: terraform
         run: terraform plan
-        env:
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
       - name: Terraform Apply
+        working-directory: terraform
         run: terraform apply -auto-approve
-        env:
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
-  deploy-nodejs:
-    needs: terraform
+  docker:
+    name: Build and Run Node.js App
     runs-on: ubuntu-latest
+    needs: terraform  # Run only after Terraform completes successfully
 
     steps:
-      - name: Get VM Public IP
-        run: echo "VM_IP=$(terraform output -raw public_ip)" >> $GITHUB_ENV
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Install Docker on VM
-        run: |
-          ssh -o StrictHostKeyChecking=no azureuser@${{ env.VM_IP }} << 'EOF'
-          sudo apt update
-          sudo apt install -y docker.io
-          sudo systemctl start docker
-          sudo systemctl enable docker
-          EOF
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      - name: Deploy Node.js App in Docker
+      - name: Build and Push Docker Image
         run: |
-          ssh -o StrictHostKeyChecking=no azureuser@${{ env.VM_IP }} << 'EOF'
-          sudo docker pull mydockerhubuser/my-nodejs-app:latest
-          sudo docker run -d -p 80:3000 mydockerhubuser/my-nodejs-app
-          EOF
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/nodejs-app:latest .
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/nodejs-app:latest
+
+      - name: Run Docker Container
+        run: |
+          docker run -d -p 3000:3000 --name nodejs-app ${{ secrets.DOCKER_HUB_USERNAME }}/nodejs-app:latest
