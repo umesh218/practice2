@@ -1,5 +1,5 @@
 variable "resource_group_name" { default = "myResourceGroup" }
-variable "location" { default = "East US" }
+variable "location" { default = "Central US" }
 variable "vm_name" { default = "myVM" }
 variable "admin_username" { default = "azureuser" }
 variable "vm_size" { default = "Standard_B1s" }
